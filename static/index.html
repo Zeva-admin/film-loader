@@ -3,39 +3,86 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Film Loader</title>
+<meta name="theme-color" content="#11182d">
+<title>Film Loader // media relay</title>
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
-<div class="win">
-  <div class="title"><span>📼 Film Loader — загрузка на Google Drive</span><span class="ctl"><b>_</b><b>□</b><b>×</b></span></div>
-  <div class="body">
-    <fieldset>
-      <legend>Прямая ссылка</legend>
-      <input id="url" type="text" placeholder="https://site.com/movie.mp4">
-      <div class="row"><button class="btn" id="check">Проверить</button></div>
-    </fieldset>
+<main class="shell">
+  <header class="hero panel">
+    <div class="brand-mark">FL<span>//</span></div>
+    <div class="brand-copy">
+      <div class="eyebrow">REMOTE MEDIA RELAY · v2.0</div>
+      <h1>Film Loader</h1>
+      <p>Прямая ссылка или страница с плеером — сервис сам выберет способ загрузки.</p>
+    </div>
+    <div class="live"><i></i> ONLINE</div>
+  </header>
 
-    <fieldset id="step2" hidden>
-      <legend>Информация о файле</legend>
+  <section class="panel command-panel">
+    <div class="section-head">
+      <div><span class="kicker">01</span><h2>Новая загрузка</h2></div>
+      <span class="chip">AUTO ROUTER</span>
+    </div>
+    <label class="label" for="url">Ссылка на фильм, страницу или плеер</label>
+    <div class="url-line">
+      <span class="prompt">&gt;_</span>
+      <input id="url" type="url" autocomplete="off" placeholder="https://site.example/watch/film">
+      <button class="btn primary" id="check">Сканировать</button>
+    </div>
+    <div class="controls">
+      <label class="mode-label" for="mode">Режим</label>
+      <select id="mode">
+        <option value="auto">AUTO — прямой файл → yt-dlp</option>
+        <option value="smart">SMART — искать плеер и поток</option>
+        <option value="direct">DIRECT — только прямая ссылка</option>
+      </select>
+      <span class="hint">yt-dlp + ffmpeg включаются автоматически для страниц с плеером.</span>
+    </div>
+  </section>
+
+  <section class="panel scan-panel" id="step2" hidden>
+    <div class="section-head">
+      <div><span class="kicker">02</span><h2>Результат сканирования</h2></div>
+      <span class="chip accent" id="methodChip">READY</span>
+    </div>
+    <div class="scan-grid">
       <table id="info"></table>
-      <label for="title">Название фильма:</label>
-      <input id="title" type="text" placeholder="Например: Матрица (1999)">
-      <div class="row">
-        <button class="btn" id="confirm">Подтвердить</button>
-        <button class="btn" id="reject">Отказаться</button>
+      <div class="confirm-card">
+        <label class="label" for="title">Имя файла на Google Drive</label>
+        <input id="title" type="text" placeholder="Например: Матрица (1999)">
+        <div class="row">
+          <button class="btn primary" id="confirm">Добавить в очередь</button>
+          <button class="btn ghost" id="reject">Сбросить</button>
+        </div>
       </div>
-    </fieldset>
+    </div>
+  </section>
 
-    <div class="status" id="msg">Готово к работе.</div>
+  <div class="status" id="msg"><span class="status-dot"></span><span>Готово к работе.</span></div>
 
-    <fieldset>
-      <legend>Очередь загрузок</legend>
-      <div id="jobs" class="jobs"><i>Пока пусто.</i></div>
-    </fieldset>
-  </div>
-</div>
-<div class="taskbar"><button class="btn start">🪟 Пуск</button><span class="clock" id="clock"></span></div>
+  <section class="panel queue-panel">
+    <div class="section-head">
+      <div><span class="kicker">03</span><h2>Очередь загрузок</h2></div>
+      <span class="chip" id="queueCount">0 TASKS</span>
+    </div>
+    <div id="jobs" class="jobs"><div class="empty"><span>◌</span> Очередь пока пуста</div></div>
+  </section>
+
+  <section class="panel cli-panel">
+    <div class="section-head">
+      <div><span class="kicker">CLI</span><h2>Запуск из терминала</h2></div>
+      <button class="btn tiny" id="copyCurl">Скопировать</button>
+    </div>
+    <pre id="curlExample"><code>curl.exe -G "https://film-loader-cacut.onrender.com/api/download" `
+  --data-urlencode "url=https://site.example/watch/film" `
+  --data-urlencode "title=Мой фильм" `
+  --data-urlencode "mode=auto"</code></pre>
+    <p class="hint">Короткая форма тоже работает: <code>/api/https://site.example/video.mp4</code>. Для URL с query-параметрами используйте <code>--data-urlencode</code>.</p>
+  </section>
+</main>
+
+<footer class="footer"><span>FILM LOADER // RETRO RELAY</span><span id="clock"></span></footer>
 <script src="app.js"></script>
 </body>
 </html>
