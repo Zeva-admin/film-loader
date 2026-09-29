@@ -1,0 +1,4 @@
+rclone.conf
+.env
+__pycache__/
+.git/
