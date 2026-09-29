@@ -1,17 +1,25 @@
 import asyncio
 import base64
 import contextlib
+import hashlib
 import json
 import mimetypes
 import os
+import platform
 import re
 import shutil
+import stat
+import subprocess
+import sys
+import tarfile
 import tempfile
 import time
 import uuid
 from pathlib import Path
 from typing import Literal
 from urllib.parse import unquote, urlparse
+from urllib.request import Request as UrlRequest
+from urllib.request import urlopen
 
 import httpx
 from fastapi import FastAPI, HTTPException
@@ -27,7 +35,22 @@ except ImportError:  # Docker installs it; the API can still start locally witho
 REMOTE = os.getenv("REMOTE", "gdrive_model3m:films")  # remote:папка
 MAX_GB = float(os.getenv("MAX_GB", "20"))                  # лимит размера файла
 CONF = Path(tempfile.gettempdir()) / "rclone.conf"
+FFMPEG_DIR = Path(os.getenv("FFMPEG_DIR", str(Path(tempfile.gettempdir()) / "film-loader-ffmpeg")))
 UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/126 Safari/537.36"
+QUALITY_FORMAT = (
+    "bestvideo[height<=480][ext=mp4]+bestaudio[ext=m4a]/"
+    "bestvideo[height<=480]+bestaudio/"
+    "best[height<=480]/"
+    "best"
+)
+FFMPEG_ARCH = {"x86_64": "amd64", "amd64": "amd64", "aarch64": "arm64", "arm64": "arm64"}.get(
+    platform.machine().lower(), "amd64"
+)
+FFMPEG_URL = os.getenv(
+    "FFMPEG_URL",
+    f"https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-{FFMPEG_ARCH}-static.tar.xz",
+)
+FFMPEG_MD5_URL = os.getenv("FFMPEG_MD5_URL", FFMPEG_URL + ".md5")
 EXT = {
     "video/x-matroska": ".mkv",
     "video/mp4": ".mp4",
@@ -57,6 +80,72 @@ class JobIn(BaseModel):
 
 class JobCancelled(Exception):
     pass
+
+
+def _download_binary(url: str, destination: Path) -> None:
+    request = UrlRequest(url, headers={"User-Agent": UA})
+    with urlopen(request, timeout=120) as response, destination.open("wb") as output:
+        shutil.copyfileobj(response, output, length=1024 * 1024)
+
+
+def _verify_md5(archive: Path, checksum_file: Path) -> None:
+    expected = re.search(r"\b([0-9a-fA-F]{32})\b", checksum_file.read_text("utf-8", errors="replace"))
+    if not expected:
+        raise RuntimeError("FFmpeg checksum не распознан")
+    digest_state = hashlib.md5()
+    with archive.open("rb") as source:
+        for chunk in iter(lambda: source.read(1024 * 1024), b""):
+            digest_state.update(chunk)
+    digest = digest_state.hexdigest()
+    if digest.lower() != expected.group(1).lower():
+        raise RuntimeError("Проверка контрольной суммы FFmpeg не прошла")
+
+
+def ensure_ffmpeg() -> str:
+    """Return a working ffmpeg path; install a static fallback when Render lacks apt packages."""
+    system_ffmpeg = shutil.which("ffmpeg")
+    if system_ffmpeg:
+        return system_ffmpeg
+    if os.name == "nt":
+        return ""
+
+    binary = FFMPEG_DIR / "ffmpeg"
+    if binary.exists():
+        try:
+            subprocess.run([str(binary), "-version"], check=True, capture_output=True, timeout=10)
+            return str(binary)
+        except (OSError, subprocess.SubprocessError):
+            binary.unlink(missing_ok=True)
+
+    FFMPEG_DIR.mkdir(parents=True, exist_ok=True)
+    archive = FFMPEG_DIR / "ffmpeg.tar.xz"
+    checksum = FFMPEG_DIR / "ffmpeg.tar.xz.md5"
+    extract_dir = FFMPEG_DIR / "extract"
+    try:
+        print(f"[startup] ffmpeg не найден, скачиваю {FFMPEG_URL}", flush=True)
+        _download_binary(FFMPEG_URL, archive)
+        _download_binary(FFMPEG_MD5_URL, checksum)
+        _verify_md5(archive, checksum)
+        extract_dir.mkdir(exist_ok=True)
+        with tarfile.open(archive, "r:xz") as package:
+            for member in package.getmembers():
+                name = Path(member.name)
+                if member.isfile() and name.name in {"ffmpeg", "ffprobe"} and not name.is_absolute() and ".." not in name.parts:
+                    source = package.extractfile(member)
+                    if source:
+                        target = FFMPEG_DIR / name.name
+                        with source, target.open("wb") as output:
+                            shutil.copyfileobj(source, output)
+                        target.chmod(target.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+        if not binary.exists():
+            raise RuntimeError("В архиве FFmpeg не найден бинарник ffmpeg")
+        subprocess.run([str(binary), "-version"], check=True, capture_output=True, timeout=10)
+        print(f"[startup] ffmpeg установлен: {binary}", flush=True)
+        return str(binary)
+    finally:
+        archive.unlink(missing_ok=True)
+        checksum.unlink(missing_ok=True)
+        shutil.rmtree(extract_dir, ignore_errors=True)
 
 
 def clean_title(value: str) -> str:
@@ -325,11 +414,13 @@ async def cancel(jid: str):
 @app.get("/health")
 @app.get("/api/health")
 async def health():
+    ffmpeg_path = getattr(app.state, "ffmpeg_path", "")
     return {
         "ok": True,
         "queue": queue.qsize(),
         "yt_dlp": yt_dlp is not None,
-        "ffmpeg": shutil.which("ffmpeg") is not None,
+        "ffmpeg": bool(ffmpeg_path),
+        "ffmpeg_path": ffmpeg_path,
         "rclone": shutil.which("rclone") is not None,
         "remote": REMOTE,
     }
@@ -393,51 +484,85 @@ async def run_rclone(job: dict, action: str, source: str, destination: str) -> N
         raise RuntimeError(job.get("error") or f"rclone завершился с кодом {return_code}")
 
 
-def ytdlp_hook(job: dict, data: dict) -> None:
+_PROGRESS_RE = re.compile(r"\[(?P<id>[^\]]+)\]\s*(?P<pct>[\d.]+)%.*?speed\s+(?P<speed>[^|]+)\|\s*eta\s+(?P<eta>.+)")
+
+
+def ytdlp_command(job: dict, tmp_dir: Path, ffmpeg_path: str) -> list[str]:
+    output = tmp_dir / f"{job['title']}.%(ext)s"
+    return [
+        sys.executable,
+        "-m",
+        "yt_dlp",
+        "--no-playlist",
+        "--format",
+        QUALITY_FORMAT,
+        "--merge-output-format",
+        "mp4",
+        "--ffmpeg-location",
+        ffmpeg_path,
+        "--output",
+        str(output),
+        "--no-part",
+        "--buffer-size",
+        "16K",
+        "--newline",
+        "--progress-template",
+        "download:[%(info.id)s] %(progress._percent_str)s | downloaded %(progress._downloaded_bytes_str)s | speed %(progress._speed_str)s | eta %(progress._eta_str)s",
+        "--continue",
+        "--encoding",
+        "utf-8",
+        "--socket-timeout",
+        "30",
+        "--retries",
+        "3",
+        "--fragment-retries",
+        "3",
+        job["url"],
+    ]
+
+
+async def run_ytdlp(job: dict, tmp_dir: Path, ffmpeg_path: str) -> None:
+    process = await asyncio.create_subprocess_exec(
+        *ytdlp_command(job, tmp_dir, ffmpeg_path),
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.STDOUT,
+    )
+    procs[job["id"]] = process
+    try:
+        async for raw_line in process.stdout:
+            line = raw_line.decode(errors="replace").strip()
+            if not line:
+                continue
+            match = _PROGRESS_RE.search(line)
+            if match:
+                job["stage"] = "Поиск и скачивание видео"
+                percent = float(match.group("pct"))
+                if job["total"]:
+                    job["done"] = int(job["total"] * percent / 100)
+                job["speed_text"] = match.group("speed").strip()
+                job["eta_text"] = match.group("eta").strip()
+            elif "Merging" in line or "[Merger]" in line:
+                job["stage"] = "Объединение видео и аудио"
+            elif "ERROR:" in line:
+                job["error"] = line[-300:]
+        return_code = await process.wait()
+    finally:
+        procs.pop(job["id"], None)
+
     if job["status"] == "cancelled":
         raise JobCancelled()
-    if data.get("status") == "downloading":
-        job["stage"] = "Поиск и скачивание видео"
-        job["done"] = data.get("downloaded_bytes") or 0
-        job["total"] = data.get("total_bytes") or data.get("total_bytes_estimate") or job["total"]
-        job["size"] = job["total"] or job["size"]
-        job["speed"] = data.get("speed") or 0
-        job["eta"] = data.get("eta")
-    elif data.get("status") == "finished":
-        job["stage"] = "Объединение потоков / подготовка"
-        job["done"] = job["total"] or job["done"]
-        job["speed"] = 0
-        job["eta"] = None
-
-
-def download_with_ytdlp(job: dict, tmp_dir: Path) -> None:
-    if yt_dlp is None:
-        raise RuntimeError("yt-dlp не установлен в контейнере")
-
-    output = tmp_dir / f"{job['title']}.%(ext)s"
-    options = {
-        "quiet": True,
-        "no_warnings": True,
-        "noplaylist": True,
-        "format": "bv*+ba/best",
-        "merge_output_format": "mp4",
-        "outtmpl": str(output),
-        "continuedl": True,
-        "retries": 3,
-        "fragment_retries": 3,
-        "socket_timeout": 30,
-        "http_headers": {"User-Agent": UA},
-        "progress_hooks": [lambda data: ytdlp_hook(job, data)],
-    }
-    with yt_dlp.YoutubeDL(options) as ydl:
-        ydl.download([job["url"]])
+    if return_code != 0:
+        raise RuntimeError(job.get("error") or f"yt-dlp завершился с кодом {return_code}")
 
 
 async def run_smart_download(job: dict) -> None:
     tmp_dir = Path(tempfile.mkdtemp(prefix=f"film-loader-{job['id']}-"))
     try:
         job["stage"] = "Поиск видеопотока"
-        await asyncio.to_thread(download_with_ytdlp, job, tmp_dir)
+        ffmpeg_path = getattr(app.state, "ffmpeg_path", "")
+        if not ffmpeg_path:
+            raise RuntimeError("ffmpeg не найден в окружении Render")
+        await run_ytdlp(job, tmp_dir, ffmpeg_path)
         if job["status"] == "cancelled":
             raise JobCancelled()
 
@@ -508,6 +633,11 @@ async def startup():
     encoded = os.getenv("rclone") or os.getenv("RCLONE_CONFIG_B64")
     if encoded:
         CONF.write_bytes(base64.b64decode(encoded))
+    try:
+        app.state.ffmpeg_path = await asyncio.to_thread(ensure_ffmpeg)
+    except Exception as exc:
+        app.state.ffmpeg_path = ""
+        print(f"[startup] ffmpeg не удалось подготовить: {str(exc)[:300]}", flush=True)
     app.state.worker = asyncio.create_task(worker())
 
 
