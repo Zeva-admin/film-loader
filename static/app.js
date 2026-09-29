@@ -133,8 +133,10 @@ async function refresh() {
       const total = job.total || job.size || 0;
       const percent = job.status === 'done' ? 100 : total ? Math.min(100, job.done / total * 100) : 0;
       const active = job.status === 'queued' || job.status === 'running';
+      const speed = job.speed_text || `${fmt(job.speed)}/с`;
+      const eta = job.eta_text || fmtTime(job.eta);
       const detail = job.status === 'running'
-        ? `${fmt(job.done)} / ${total ? fmt(total) : '?'} · ${fmt(job.speed)}/с · осталось ${fmtTime(job.eta)}`
+        ? `${fmt(job.done)} / ${total ? fmt(total) : '?'} · ${speed} · осталось ${eta}`
         : job.status === 'failed' ? (job.error || 'неизвестная ошибка')
           : job.status === 'done' ? fmt(job.size || job.done) : job.stage || '';
       return `<article class="job">
