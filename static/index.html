@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Film Loader</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="win">
+  <div class="title"><span>📼 Film Loader — загрузка на Google Drive</span><span class="ctl"><b>_</b><b>□</b><b>×</b></span></div>
+  <div class="body">
+    <fieldset>
+      <legend>Прямая ссылка</legend>
+      <input id="url" type="text" placeholder="https://site.com/movie.mp4">
+      <div class="row"><button class="btn" id="check">Проверить</button></div>
+    </fieldset>
+
+    <fieldset id="step2" hidden>
+      <legend>Информация о файле</legend>
+      <table id="info"></table>
+      <label for="title">Название фильма:</label>
+      <input id="title" type="text" placeholder="Например: Матрица (1999)">
+      <div class="row">
+        <button class="btn" id="confirm">Подтвердить</button>
+        <button class="btn" id="reject">Отказаться</button>
+      </div>
+    </fieldset>
+
+    <div class="status" id="msg">Готово к работе.</div>
+
+    <fieldset>
+      <legend>Очередь загрузок</legend>
+      <div id="jobs" class="jobs"><i>Пока пусто.</i></div>
+    </fieldset>
+  </div>
+</div>
+<div class="taskbar"><button class="btn start">🪟 Пуск</button><span class="clock" id="clock"></span></div>
+<script src="app.js"></script>
+</body>
+</html>
