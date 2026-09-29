@@ -18,7 +18,7 @@
 Удобная PowerShell-команда:
 
 ```powershell
-curl.exe -G "https://film-loader-cacut.onrender.com/api/download" `
+curl.exe -G "https:/nload" `
   --data-urlencode "url=https://site.example/watch/film" `
   --data-urlencode "title=Мой фильм" `
   --data-urlencode "mode=auto"
@@ -27,7 +27,7 @@ curl.exe -G "https://film-loader-cacut.onrender.com/api/download" `
 Короткая форма для прямой ссылки:
 
 ```powershell
-curl.exe "https://film-loader-cacut.onrender.com/api/https://site.example/video.mp4"
+curl.exe "https://mp4"
 ```
 
 Для страниц с плеером используйте `mode=smart`. В режиме `auto` сервис сначала проверяет прямой файл, а затем передаёт страницу `yt-dlp`. Ответом будет JSON с `id` задачи и её текущим статусом.
@@ -35,14 +35,14 @@ curl.exe "https://film-loader-cacut.onrender.com/api/https://site.example/video.
 Проверить очередь:
 
 ```powershell
-curl.exe "https://film-loader-cacut.onrender.com/api/jobs"
-curl.exe "https://film-loader-cacut.onrender.com/api/jobs/JOB_ID"
+curl.exe "https://s"
+curl.exe "https:D"
 ```
 
 Отменить задачу:
 
 ```powershell
-curl.exe -X POST "https://film-loader-cacut.onrender.com/api/jobs/JOB_ID/cancel"
+curl.exe -X POST "https:ncel"
 ```
 
 Также доступны интерактивная документация FastAPI по `/docs` и проверка состояния по `/health`.
